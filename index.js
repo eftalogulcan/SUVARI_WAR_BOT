@@ -7,7 +7,8 @@ const {
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  StringSelectMenuBuilder
 } = require("discord.js");
 
 const client = new Client({
@@ -17,9 +18,60 @@ const client = new Client({
   ]
 });
 
-// Geçici hafıza: bot kapanırsa sıfırlanır.
-// Sonra bunu SQLite'a taşıyacağız.
+const CLASSES = [
+  { label: "Mızrak", value: "mizrak", emoji: "🔱" },
+  { label: "Arbalet", value: "arbalet", emoji: "🎯" },
+  { label: "Çekiç", value: "cekic", emoji: "🔨" },
+  { label: "Uzun Kılıç", value: "uzun_kilic", emoji: "⚔️" },
+  { label: "Tank", value: "tank", emoji: "🛡️" },
+  { label: "Healer", value: "healer", emoji: "💚" },
+  { label: "Çift Bıçak", value: "cift_bicak", emoji: "🗡️" },
+  { label: "Yay", value: "yay", emoji: "🏹" },
+  { label: "Necromancer", value: "necromancer", emoji: "💀" },
+  { label: "Elementalist", value: "elementalist", emoji: "🔥" },
+  { label: "Çift Balta", value: "cift_balta", emoji: "🪓" }
+];
+
 const warPolls = new Map();
+
+function getClassInfo(value) {
+  return CLASSES.find(c => c.value === value);
+}
+
+function getClassText(value) {
+  const info = getClassInfo(value);
+  if (!info) return "Class seçilmedi";
+  return `${info.emoji} ${info.label}`;
+}
+
+function getClassDistributionText(poll) {
+  const attendUserIds = [...poll.votes.attend];
+
+  if (attendUserIds.length === 0) {
+    return "Henüz katılacak oyuncu yok.";
+  }
+
+  const counts = {};
+
+  for (const userId of attendUserIds) {
+    const classValue = poll.classes.get(userId) || "secim_yok";
+    counts[classValue] = (counts[classValue] || 0) + 1;
+  }
+
+  const lines = [];
+
+  for (const classItem of CLASSES) {
+    if (counts[classItem.value]) {
+      lines.push(`${classItem.emoji} ${classItem.label}: **${counts[classItem.value]}**`);
+    }
+  }
+
+  if (counts.secim_yok) {
+    lines.push(`❔ Class seçilmedi: **${counts.secim_yok}**`);
+  }
+
+  return lines.join("\n") || "Henüz class seçimi yok.";
+}
 
 function createWarEmbed(poll) {
   const attendCount = poll.votes.attend.size;
@@ -59,9 +111,14 @@ function createWarEmbed(poll) {
         inline: false
       },
       {
+        name: "Class Dağılımı",
+        value: getClassDistributionText(poll),
+        inline: false
+      },
+      {
         name: "Ayarlar",
         value:
-          "⏱️ Bitiş süresi: manuel kapatma\n" +
+          "⏱️ Süre: 24 saatlik günlük kullanım\n" +
           "⚖️ 1 seçeneğe izin verildi\n" +
           `🆔 Anket Kimliği: \`${poll.id}\``,
         inline: false
@@ -78,8 +135,7 @@ function createWarButtons(pollId) {
   const notAttendCount = poll ? poll.votes.not_attend.size : 0;
   const maybeCount = poll ? poll.votes.maybe.size : 0;
 
-  const totalParticipants =
-    attendCount + notAttendCount + maybeCount;
+  const totalParticipants = attendCount + notAttendCount + maybeCount;
 
   return [
     new ActionRowBuilder().addComponents(
@@ -112,6 +168,24 @@ function createWarButtons(pollId) {
     )
   ];
 }
+
+function createClassSelectMenu(pollId) {
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`war_class:${pollId}`)
+        .setPlaceholder("Class seç")
+        .addOptions(
+          CLASSES.map(classItem => ({
+            label: classItem.label,
+            value: classItem.value,
+            emoji: classItem.emoji
+          }))
+        )
+    )
+  ];
+}
+
 function removeUserFromAllVotes(poll, userId) {
   poll.votes.attend.delete(userId);
   poll.votes.not_attend.delete(userId);
@@ -139,7 +213,12 @@ function buildParticipantsText(poll, voteType) {
         ? `<t:${Math.floor(votedAt / 1000)}:R>`
         : "zaman bilinmiyor";
 
-      return `${index + 1}. <@${userId}> — ${timeText} • Ağırlık: 1`;
+      const classText =
+        voteType === "attend"
+          ? ` • ${getClassText(poll.classes.get(userId))}`
+          : "";
+
+      return `${index + 1}. <@${userId}>${classText} — ${timeText} • Ağırlık: 1`;
     })
     .join("\n");
 }
@@ -171,8 +250,11 @@ client.on(Events.InteractionCreate, async interaction => {
           not_attend: new Set(),
           maybe: new Set()
         },
-        voteTimes: new Map()
+        voteTimes: new Map(),
+        classes: new Map()
       };
+
+      warPolls.set(pollId, poll);
 
       const sentMessage = await interaction.reply({
         content: "@everyone",
@@ -183,7 +265,6 @@ client.on(Events.InteractionCreate, async interaction => {
       });
 
       poll.messageId = sentMessage.id;
-      warPolls.set(pollId, poll);
       return;
     }
   }
@@ -214,15 +295,29 @@ client.on(Events.InteractionCreate, async interaction => {
       poll.votes[voteType].add(interaction.user.id);
       poll.voteTimes.set(interaction.user.id, Date.now());
 
+      if (voteType !== "attend") {
+        poll.classes.delete(interaction.user.id);
+      }
+
       await interaction.update({
         embeds: [createWarEmbed(poll)],
         components: createWarButtons(pollId)
       });
 
-      await interaction.followUp({
-        content: `Oyun kaydedildi: **${getVoteLabel(voteType)}**`,
-        ephemeral: true
-      });
+      if (voteType === "attend") {
+        await interaction.followUp({
+          content:
+            `Oyun kaydedildi: **${getVoteLabel(voteType)}**\n\n` +
+            "Şimdi classını seç:",
+          components: createClassSelectMenu(pollId),
+          ephemeral: true
+        });
+      } else {
+        await interaction.followUp({
+          content: `Oyun kaydedildi: **${getVoteLabel(voteType)}**`,
+          ephemeral: true
+        });
+      }
 
       return;
     }
@@ -233,7 +328,8 @@ client.on(Events.InteractionCreate, async interaction => {
           "Oyunu değiştirmek için tekrar A, B veya C butonuna basman yeterli.\n\n" +
           "A = Katılacağım\n" +
           "B = Katılamayacağım\n" +
-          "C = Belki",
+          "C = Belki\n\n" +
+          "A seçersen class seçimi de açılır.",
         ephemeral: true
       });
       return;
@@ -242,6 +338,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (action === "war_participants") {
       const text =
         `**Katılımcılar — ${poll.title}**\n\n` +
+        `**Class Dağılımı**\n${getClassDistributionText(poll)}\n\n` +
         `**🇦 KATILACAĞIM - I WILL ATTEND**\n${buildParticipantsText(poll, "attend")}\n\n` +
         `**🇧 KATILAMAYACAĞIM - I WILL NOT ATTEND**\n${buildParticipantsText(poll, "not_attend")}\n\n` +
         `**🇨 BELKİ - MAYBE**\n${buildParticipantsText(poll, "maybe")}`;
@@ -250,6 +347,51 @@ client.on(Events.InteractionCreate, async interaction => {
         content: text.slice(0, 1900),
         ephemeral: true
       });
+      return;
+    }
+  }
+
+  if (interaction.isStringSelectMenu()) {
+    const [action, pollId] = interaction.customId.split(":");
+    const poll = warPolls.get(pollId);
+
+    if (!poll) {
+      await interaction.reply({
+        content: "Bu anket bulunamadı veya bot yeniden başlatıldığı için hafızadan silindi.",
+        ephemeral: true
+      });
+      return;
+    }
+
+    if (action === "war_class") {
+      if (!poll.votes.attend.has(interaction.user.id)) {
+        await interaction.reply({
+          content: "Class seçebilmek için önce A - Katılacağım seçeneğine oy vermelisin.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      const selectedClass = interaction.values[0];
+      poll.classes.set(interaction.user.id, selectedClass);
+
+      try {
+        const channel = await client.channels.fetch(poll.channelId);
+        const message = await channel.messages.fetch(poll.messageId);
+
+        await message.edit({
+          embeds: [createWarEmbed(poll)],
+          components: createWarButtons(pollId)
+        });
+      } catch (error) {
+        console.error("Anket mesajı güncellenemedi:", error);
+      }
+
+      await interaction.update({
+        content: `Class seçimin kaydedildi: **${getClassText(selectedClass)}**`,
+        components: []
+      });
+
       return;
     }
   }
