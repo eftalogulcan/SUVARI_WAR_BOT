@@ -264,7 +264,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
-      const title = interaction.options.getString("baslik", true);
+      const title = "Günlük Savaş Katılım Durumu";
       const pollId = Date.now().toString(36);
 
       const poll = {
