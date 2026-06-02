@@ -480,19 +480,27 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (action === "war_participants") {
-      const text =
-        `**Katılımcılar — ${poll.title}**\n\n` +
-        `**Class Dağılımı**\n${getClassDistributionText(poll)}\n\n` +
-        `**🇦 KATILACAĞIM - I WILL ATTEND**\n${buildParticipantsText(poll, "attend")}\n\n` +
-        `**🇧 KATILAMAYACAĞIM - I WILL NOT ATTEND**\n${buildParticipantsText(poll, "not_attend")}\n\n` +
-        `**🇨 BELKİ - MAYBE**\n${buildParticipantsText(poll, "maybe")}`;
+  if (!hasWarManagerPermission(interaction)) {
+    await interaction.reply({
+      content: "❌ Katılımcı listesini sadece War Manager görebilir.",
+      ephemeral: true
+    });
+    return;
+  }
 
-      await interaction.reply({
-        content: text.slice(0, 1900),
-        ephemeral: true
-      });
-      return;
-    }
+  const text =
+    `**Katılımcılar — ${poll.title}**\n\n` +
+    `**Class Dağılımı**\n${getClassDistributionText(poll)}\n\n` +
+    `**🇦 KATILACAĞIM - I WILL ATTEND**\n${buildParticipantsText(poll, "attend")}\n\n` +
+    `**🇧 KATILAMAYACAĞIM - I WILL NOT ATTEND**\n${buildParticipantsText(poll, "not_attend")}\n\n` +
+    `**🇨 BELKİ - MAYBE**\n${buildParticipantsText(poll, "maybe")}`;
+
+  await interaction.reply({
+    content: text.slice(0, 1900),
+    ephemeral: true
+  });
+  return;
+}
   }
 
   if (interaction.isStringSelectMenu()) {
