@@ -218,7 +218,7 @@ function buildParticipantsText(poll, voteType) {
           ? ` • ${getClassText(poll.classes.get(userId))}`
           : "";
 
-      return `${index + 1}. <@${userId}>${classText} — ${timeText} • Ağırlık: 1`;
+      return `${index + 1}. <@${userId}>${classText} — ${timeText}`;
     })
     .join("\n");
 }
@@ -235,8 +235,22 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.commandName === "war") {
-      const title = interaction.options.getString("baslik", true);
-      const pollId = Date.now().toString(36);
+
+  const member = interaction.member;
+
+  const hasPermission =
+    member.roles.cache.some(role => role.name === "War Manager");
+
+  if (!hasPermission) {
+    await interaction.reply({
+      content: "❌ Bu komutu kullanmak için War Manager rolüne sahip olmalısın.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const title = interaction.options.getString("baslik", true);
+  const pollId = Date.now().toString(36);
 
       const poll = {
         id: pollId,
