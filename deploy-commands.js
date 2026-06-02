@@ -4,17 +4,21 @@ const { REST, Routes, SlashCommandBuilder } = require("discord.js");
 
 const commands = [
   new SlashCommandBuilder()
-  .setName("war")
-  .setDescription("Savaş katılım anketi oluştur")
-  .addStringOption(option =>
-    option
-      .setName("baslik")
-      .setDescription("Savaş başlığı")
-      .setRequired(true)
-  )
+    .setName("war")
+    .setDescription("Savaş katılım anketi oluştur")
+    .addStringOption(option =>
+      option
+        .setName("baslik")
+        .setDescription("Savaş başlığı")
+        .setRequired(true)
+    )
     .toJSON(),
-];
 
+  new SlashCommandBuilder()
+    .setName("war-close")
+    .setDescription("Aktif savaş anketini kapat")
+    .toJSON()
+];
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {

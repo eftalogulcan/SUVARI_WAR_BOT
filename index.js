@@ -18,6 +18,8 @@ const client = new Client({
   ]
 });
 
+const MANAGER_ROLE_NAME = "War Manager";
+
 const CLASSES = [
   { label: "Mızrak", value: "mizrak", emoji: "🔱" },
   { label: "Arbalet", value: "arbalet", emoji: "🎯" },
@@ -33,6 +35,11 @@ const CLASSES = [
 ];
 
 const warPolls = new Map();
+let activePollId = null;
+
+function hasWarManagerPermission(interaction) {
+  return interaction.member.roles.cache.some(role => role.name === MANAGER_ROLE_NAME);
+}
 
 function getClassInfo(value) {
   return CLASSES.find(c => c.value === value);
@@ -80,8 +87,8 @@ function createWarEmbed(poll) {
   const totalCount = attendCount + notAttendCount + maybeCount;
 
   return new EmbedBuilder()
-    .setColor(0x5865F2)
-    .setTitle("⚔️ SAVAŞ KATILIM DURUMU")
+    .setColor(poll.closed ? 0x808080 : 0x5865F2)
+    .setTitle(poll.closed ? "🔒 SAVAŞ KATILIM DURUMU KAPANDI" : "⚔️ SAVAŞ KATILIM DURUMU")
     .setDescription(
       `**${poll.title}**\n\n` +
       `Savaşa katılıp katılamayacağınızı lütfen belirtin.\n` +
@@ -118,6 +125,7 @@ function createWarEmbed(poll) {
       {
         name: "Ayarlar",
         value:
+          `Durum: **${poll.closed ? "Kapalı" : "Açık"}**\n` +
           "⏱️ Süre: 24 saatlik günlük kullanım\n" +
           "⚖️ 1 seçeneğe izin verildi\n" +
           `🆔 Anket Kimliği: \`${poll.id}\``,
@@ -128,7 +136,7 @@ function createWarEmbed(poll) {
     .setTimestamp();
 }
 
-function createWarButtons(pollId) {
+function createWarButtons(pollId, disabled = false) {
   const poll = warPolls.get(pollId);
 
   const attendCount = poll ? poll.votes.attend.size : 0;
@@ -142,29 +150,34 @@ function createWarButtons(pollId) {
       new ButtonBuilder()
         .setCustomId(`war_vote:${pollId}:attend`)
         .setLabel(`A ${attendCount}`)
-        .setStyle(ButtonStyle.Primary),
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled),
 
       new ButtonBuilder()
         .setCustomId(`war_vote:${pollId}:not_attend`)
         .setLabel(`B ${notAttendCount}`)
-        .setStyle(ButtonStyle.Primary),
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled),
 
       new ButtonBuilder()
         .setCustomId(`war_vote:${pollId}:maybe`)
         .setLabel(`C ${maybeCount}`)
         .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled)
     ),
 
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`war_manage:${pollId}`)
         .setLabel("Oylarınızı yönetin")
-        .setStyle(ButtonStyle.Secondary),
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(disabled),
 
       new ButtonBuilder()
         .setCustomId(`war_participants:${pollId}`)
         .setLabel(`Katılımcılar (${totalParticipants})`)
         .setStyle(ButtonStyle.Secondary)
+        .setDisabled(false)
     )
   ];
 }
@@ -235,22 +248,24 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.commandName === "war") {
+      if (!hasWarManagerPermission(interaction)) {
+        await interaction.reply({
+          content: "❌ Bu komutu kullanmak için War Manager rolüne sahip olmalısın.",
+          ephemeral: true
+        });
+        return;
+      }
 
-  const member = interaction.member;
+      if (activePollId && warPolls.has(activePollId)) {
+        await interaction.reply({
+          content: "⚠️ Zaten aktif bir savaş anketi var. Önce `/war-close` ile kapatmalısın.",
+          ephemeral: true
+        });
+        return;
+      }
 
-  const hasPermission =
-    member.roles.cache.some(role => role.name === "War Manager");
-
-  if (!hasPermission) {
-    await interaction.reply({
-      content: "❌ Bu komutu kullanmak için War Manager rolüne sahip olmalısın.",
-      ephemeral: true
-    });
-    return;
-  }
-
-  const title = interaction.options.getString("baslik", true);
-  const pollId = Date.now().toString(36);
+      const title = interaction.options.getString("baslik", true);
+      const pollId = Date.now().toString(36);
 
       const poll = {
         id: pollId,
@@ -259,6 +274,7 @@ client.on(Events.InteractionCreate, async interaction => {
         messageId: null,
         createdBy: interaction.user.id,
         createdAt: Date.now(),
+        closed: false,
         votes: {
           attend: new Set(),
           not_attend: new Set(),
@@ -269,6 +285,7 @@ client.on(Events.InteractionCreate, async interaction => {
       };
 
       warPolls.set(pollId, poll);
+      activePollId = pollId;
 
       const sentMessage = await interaction.reply({
         content: "@everyone",
@@ -281,6 +298,53 @@ client.on(Events.InteractionCreate, async interaction => {
       poll.messageId = sentMessage.id;
       return;
     }
+
+    if (interaction.commandName === "war-close") {
+      if (!hasWarManagerPermission(interaction)) {
+        await interaction.reply({
+          content: "❌ Bu komutu kullanmak için War Manager rolüne sahip olmalısın.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!activePollId || !warPolls.has(activePollId)) {
+        await interaction.reply({
+          content: "⚠️ Aktif bir savaş anketi yok.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      const poll = warPolls.get(activePollId);
+      poll.closed = true;
+
+      try {
+        const channel = await client.channels.fetch(poll.channelId);
+        const message = await channel.messages.fetch(poll.messageId);
+
+        await message.edit({
+          embeds: [createWarEmbed(poll)],
+          components: createWarButtons(poll.id, true)
+        });
+
+        activePollId = null;
+
+        await interaction.reply({
+          content: "✅ Savaş anketi kapatıldı. Oy verme butonları kilitlendi.",
+          ephemeral: true
+        });
+      } catch (error) {
+        console.error("Anket kapatılamadı:", error);
+
+        await interaction.reply({
+          content: "❌ Anket kapatılırken bir hata oluştu.",
+          ephemeral: true
+        });
+      }
+
+      return;
+    }
   }
 
   if (interaction.isButton()) {
@@ -290,6 +354,14 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!poll) {
       await interaction.reply({
         content: "Bu anket bulunamadı veya bot yeniden başlatıldığı için hafızadan silindi.",
+        ephemeral: true
+      });
+      return;
+    }
+
+    if (poll.closed && action !== "war_participants") {
+      await interaction.reply({
+        content: "🔒 Bu savaş anketi kapatılmış. Artık oy değiştirilemez.",
         ephemeral: true
       });
       return;
@@ -372,6 +444,14 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!poll) {
       await interaction.reply({
         content: "Bu anket bulunamadı veya bot yeniden başlatıldığı için hafızadan silindi.",
+        ephemeral: true
+      });
+      return;
+    }
+
+    if (poll.closed) {
+      await interaction.reply({
+        content: "🔒 Bu savaş anketi kapatılmış. Artık class seçimi değiştirilemez.",
         ephemeral: true
       });
       return;
