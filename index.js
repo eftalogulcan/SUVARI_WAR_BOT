@@ -19,6 +19,7 @@ const client = new Client({
 });
 
 const MANAGER_ROLE_NAME = "War Manager";
+const WAR_CHANNEL_ID = "1511344647077761054";
 const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 const CLASSES = [
@@ -322,15 +323,24 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.commandName === "war") {
-      if (!hasWarManagerPermission(interaction)) {
-        await interaction.reply({
-          content: "❌ Bu komutu kullanmak için War Manager rolüne sahip olmalısın.",
-          ephemeral: true
-        });
-        return;
-      }
 
-      if (activePollId && warPolls.has(activePollId)) {
+  if (interaction.channelId !== WAR_CHANNEL_ID) {
+    await interaction.reply({
+      content: "<#1511344647077761054> kanalı dışında savaş anketi açılamaz.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (!hasWarManagerPermission(interaction)) {
+    await interaction.reply({
+      content: "❌ Bu komutu kullanmak için War Manager rolüne sahip olmalısın.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (activePollId && warPolls.has(activePollId)) {
         await interaction.reply({
           content: "⚠️ Zaten aktif bir savaş anketi var. Bu anket Türkiye saatiyle 21:15'te otomatik kapanacak.",
           ephemeral: true
@@ -377,6 +387,15 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.commandName === "war-close") {
+
+  if (interaction.channelId !== WAR_CHANNEL_ID) {
+    await interaction.reply({
+      content: "<#1511344647077761054> kanalı dışında savaş anketi kapatılamaz.",
+      ephemeral: true
+    });
+    return;
+  }
+
       if (!hasWarManagerPermission(interaction)) {
         await interaction.reply({
           content: "❌ Bu komutu kullanmak için War Manager rolüne sahip olmalısın.",

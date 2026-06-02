@@ -3,7 +3,7 @@ require("dotenv").config();
 const { REST, Routes, SlashCommandBuilder } = require("discord.js");
 
 const CLIENT_ID = "1511063481552736337";
-const GUILD_ID = "1511064609874907389";
+const GUILD_ID = "625001869533773834";
 
 const guildCommands = [
   new SlashCommandBuilder()
