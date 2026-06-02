@@ -19,6 +19,7 @@ const client = new Client({
 });
 
 const MANAGER_ROLE_NAME = "War Manager";
+const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 const CLASSES = [
   { label: "Mızrak", value: "mizrak", emoji: "🔱" },
@@ -36,9 +37,27 @@ const CLASSES = [
 
 const warPolls = new Map();
 let activePollId = null;
+let activeCloseTimeout = null;
 
 function hasWarManagerPermission(interaction) {
   return interaction.member.roles.cache.some(role => role.name === MANAGER_ROLE_NAME);
+}
+
+function getNextTurkeyCloseTimeMs() {
+  const nowUtc = Date.now();
+  const nowTurkey = new Date(nowUtc + TURKEY_UTC_OFFSET_MS);
+
+  const year = nowTurkey.getUTCFullYear();
+  const month = nowTurkey.getUTCMonth();
+  const day = nowTurkey.getUTCDate();
+
+  let closeUtcMs = Date.UTC(year, month, day, 18, 15, 0); // Türkiye 21:15 = UTC 18:15
+
+  if (nowUtc >= closeUtcMs) {
+    closeUtcMs = Date.UTC(year, month, day + 1, 18, 15, 0);
+  }
+
+  return closeUtcMs;
 }
 
 function getClassInfo(value) {
@@ -86,6 +105,10 @@ function createWarEmbed(poll) {
   const maybeCount = poll.votes.maybe.size;
   const totalCount = attendCount + notAttendCount + maybeCount;
 
+  const closeText = poll.closeAt
+    ? `Türkiye saatiyle **21:15**\nDiscord zamanı: <t:${Math.floor(poll.closeAt / 1000)}:F> (<t:${Math.floor(poll.closeAt / 1000)}:R>)`
+    : "Türkiye saatiyle 21:15";
+
   return new EmbedBuilder()
     .setColor(poll.closed ? 0x808080 : 0x5865F2)
     .setTitle(poll.closed ? "🔒 SAVAŞ KATILIM DURUMU KAPANDI" : "⚔️ SAVAŞ KATILIM DURUMU")
@@ -126,7 +149,7 @@ function createWarEmbed(poll) {
         name: "Ayarlar",
         value:
           `Durum: **${poll.closed ? "Kapalı" : "Açık"}**\n` +
-          "⏱️ Süre: 24 saatlik günlük kullanım\n" +
+          `⏱️ Otomatik kapanış: ${closeText}\n` +
           "⚖️ 1 seçeneğe izin verildi\n" +
           `🆔 Anket Kimliği: \`${poll.id}\``,
         inline: false
@@ -236,6 +259,57 @@ function buildParticipantsText(poll, voteType) {
     .join("\n");
 }
 
+async function closePoll(poll, reason = "manual") {
+  if (!poll || poll.closed) return;
+
+  poll.closed = true;
+
+  try {
+    const channel = await client.channels.fetch(poll.channelId);
+    const message = await channel.messages.fetch(poll.messageId);
+
+    await message.edit({
+      embeds: [createWarEmbed(poll)],
+      components: createWarButtons(poll.id, true)
+    });
+
+    if (activePollId === poll.id) {
+      activePollId = null;
+    }
+
+    if (activeCloseTimeout) {
+      clearTimeout(activeCloseTimeout);
+      activeCloseTimeout = null;
+    }
+
+    if (reason === "auto") {
+      await channel.send("🔒 Savaş katılım anketi Türkiye saatiyle **21:15** olduğu için otomatik kapatıldı.");
+    }
+  } catch (error) {
+    console.error("Anket kapatılamadı:", error);
+  }
+}
+
+function scheduleAutoClose(poll) {
+  if (activeCloseTimeout) {
+    clearTimeout(activeCloseTimeout);
+    activeCloseTimeout = null;
+  }
+
+  const delay = poll.closeAt - Date.now();
+
+  if (delay <= 0) {
+    closePoll(poll, "auto");
+    return;
+  }
+
+  activeCloseTimeout = setTimeout(() => {
+    closePoll(poll, "auto");
+  }, delay);
+
+  console.log(`⏱️ Anket otomatik kapanış zamanı: ${new Date(poll.closeAt).toISOString()} UTC`);
+}
+
 client.once(Events.ClientReady, () => {
   console.log(`✅ ${client.user.tag} aktif!`);
 });
@@ -258,7 +332,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (activePollId && warPolls.has(activePollId)) {
         await interaction.reply({
-          content: "⚠️ Zaten aktif bir savaş anketi var. Önce `/war-close` ile kapatmalısın.",
+          content: "⚠️ Zaten aktif bir savaş anketi var. Bu anket Türkiye saatiyle 21:15'te otomatik kapanacak.",
           ephemeral: true
         });
         return;
@@ -266,6 +340,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const title = "Günlük Savaş Katılım Durumu";
       const pollId = Date.now().toString(36);
+      const closeAt = getNextTurkeyCloseTimeMs();
 
       const poll = {
         id: pollId,
@@ -274,6 +349,7 @@ client.on(Events.InteractionCreate, async interaction => {
         messageId: null,
         createdBy: interaction.user.id,
         createdAt: Date.now(),
+        closeAt,
         closed: false,
         votes: {
           attend: new Set(),
@@ -296,6 +372,7 @@ client.on(Events.InteractionCreate, async interaction => {
       });
 
       poll.messageId = sentMessage.id;
+      scheduleAutoClose(poll);
       return;
     }
 
@@ -317,31 +394,12 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       const poll = warPolls.get(activePollId);
-      poll.closed = true;
+      await closePoll(poll, "manual");
 
-      try {
-        const channel = await client.channels.fetch(poll.channelId);
-        const message = await channel.messages.fetch(poll.messageId);
-
-        await message.edit({
-          embeds: [createWarEmbed(poll)],
-          components: createWarButtons(poll.id, true)
-        });
-
-        activePollId = null;
-
-        await interaction.reply({
-          content: "✅ Savaş anketi kapatıldı. Oy verme butonları kilitlendi.",
-          ephemeral: true
-        });
-      } catch (error) {
-        console.error("Anket kapatılamadı:", error);
-
-        await interaction.reply({
-          content: "❌ Anket kapatılırken bir hata oluştu.",
-          ephemeral: true
-        });
-      }
+      await interaction.reply({
+        content: "✅ Savaş anketi kapatıldı. Oy verme butonları kilitlendi.",
+        ephemeral: true
+      });
 
       return;
     }
