@@ -274,6 +274,13 @@ async function closePoll(poll, reason = "manual") {
       components: createWarButtons(poll.id, true)
     });
 
+    if (reason === "auto") {
+      await channel.send("🔒 Savaş katılım anketi Türkiye saatiyle **21:15** olduğu için otomatik kapatıldı.");
+    }
+  } catch (error) {
+    console.error("Anket kapatılamadı:", error);
+  } finally {
+    // Discord mesaj düzenleme hata verse bile temizlik HER ZAMAN yapılır
     if (activePollId === poll.id) {
       activePollId = null;
     }
@@ -282,12 +289,6 @@ async function closePoll(poll, reason = "manual") {
       clearTimeout(activeCloseTimeout);
       activeCloseTimeout = null;
     }
-
-    if (reason === "auto") {
-      await channel.send("🔒 Savaş katılım anketi Türkiye saatiyle **21:15** olduğu için otomatik kapatıldı.");
-    }
-  } catch (error) {
-    console.error("Anket kapatılamadı:", error);
   }
 }
 
@@ -311,8 +312,17 @@ function scheduleAutoClose(poll) {
   console.log(`⏱️ Anket otomatik kapanış zamanı: ${new Date(poll.closeAt).toISOString()} UTC`);
 }
 
-client.once(Events.ClientReady, () => {
+client.once(Events.ClientReady, async () => {
   console.log(`✅ ${client.user.tag} aktif!`);
+
+  // Bot açılırken: bellekte kalmış ve kapanma zamanı geçmiş anket varsa kapat
+  if (activePollId && warPolls.has(activePollId)) {
+    const poll = warPolls.get(activePollId);
+    if (!poll.closed && Date.now() > poll.closeAt) {
+      await closePoll(poll, "auto");
+      activePollId = null;
+    }
+  }
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -341,11 +351,23 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   if (activePollId && warPolls.has(activePollId)) {
-        await interaction.reply({
-          content: "⚠️ Zaten aktif bir savaş anketi var. Bu anket Türkiye saatiyle 21:15'te otomatik kapanacak.",
-          ephemeral: true
-        });
-        return;
+        const existingPoll = warPolls.get(activePollId);
+
+        // Req 2: süresi geçmiş ama otomatik kapanma çalışmamışsa şimdi kapat
+        if (!existingPoll.closed && Date.now() > existingPoll.closeAt) {
+          await closePoll(existingPoll, "auto");
+        }
+
+        if (existingPoll.closed) {
+          // Req 1: anket kapanmış -> slotu boşalt ve yeni ankete izin ver
+          activePollId = null;
+        } else {
+          await interaction.reply({
+            content: "⚠️ Zaten aktif bir savaş anketi var. Bu anket Türkiye saatiyle 21:15'te otomatik kapanacak.",
+            ephemeral: true
+          });
+          return;
+        }
       }
 
       const title = "Günlük Savaş Katılım Durumu";
